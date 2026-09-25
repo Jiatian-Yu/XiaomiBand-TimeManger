@@ -1,8 +1,12 @@
 <template>
   <div class="demo-page">
-    <text class="title">{{ $t("a.b") }},我测你妈{{ title }}</text>
-    <!-- 点击跳转详情页 -->
-    <input class="btn" type="button" value="我测你妈" onclick="routeDetail" />
+    <div class="header">
+      <text>任务列表</text>
+    </div>
+
+    <div class="content-container">
+      <text>aaa</text>
+    </div>
   </div>
 </template>
 
@@ -15,6 +19,23 @@ export default {
     title: "示例页面"
   },
 
+  onInit() {
+    console.error('onInit');
+  },
+
+  onReady() {
+    console.error('onReady');
+  },
+
+  // 在界面初始化时加载所有的任务清单
+  async loadData() {
+    const res = await fetch("../../data.json");
+    const todoList = await res.json();
+
+    document.getElementById();
+    return todoList;
+  },
+
   routeDetail() {
     // 跳转到应用内的某个页面，router用法详见：文档->接口->页面路由
     router.push({
@@ -22,18 +43,37 @@ export default {
     })
   }
 }
+
+
 </script>
 
 <style>
 .demo-page {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  align-items: center;
+  background-color: black;
+}
+
+.header {
+  display: flex;
+  background-color: blueviolet;
+  width: 100%;
+  min-height: 80px;
   flex-direction: column;
   justify-content: center;
   align-items: center;
 }
 
-.title {
-  font-size: 20px;
-  text-align: center;
+.content-container {
+  background-color: #09ba07;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  align-items: center;
+  width: 100%;
+  flex: 1;
 }
 
 .btn {
