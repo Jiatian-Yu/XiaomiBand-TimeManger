@@ -1,3 +1,5 @@
+<import name="task-item" src="../../component/task-item"></import>
+
 <template>
   <div class="demo-page">
     <div class="header">
@@ -5,7 +7,8 @@
     </div>
 
     <div class="content-container">
-      <text>aaa</text>
+      <task-item title="hello"></task-item>
+      <text>123</text>
     </div>
   </div>
 </template>
@@ -16,7 +19,7 @@ import router from "@system.router"
 export default {
   // 页面级组件的数据模型，影响传入数据的覆盖机制：private内定义的属性不允许被覆盖
   private: {
-    title: "示例页面"
+    title: "hello"
   },
 
   onInit() {
@@ -73,7 +76,16 @@ export default {
   justify-content: flex-start;
   align-items: center;
   width: 100%;
+  gap: 5px;
+  padding: 12px;
   flex: 1;
+}
+
+.tasks {
+  width: 100%;
+  background-color: red;
+  min-height: 120px;
+  border-radius: 5px;
 }
 
 .btn {
