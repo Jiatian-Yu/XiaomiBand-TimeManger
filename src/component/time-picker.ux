@@ -1,0 +1,184 @@
+<template>
+  <div class="picker">
+    <div class="seg" @touchstart="onHStart" @touchmove="onHMove" @touchend="onHEnd">
+      <text class="num">{{hText}}</text>
+    </div>
+
+    <text class="colon">:</text>
+
+    <div class="seg" @touchstart="onMStart" @touchmove="onMMove" @touchend="onMEnd">
+      <text class="num">{{mText}}</text>
+    </div>
+
+    <text class="colon">:</text>
+
+    <div class="seg" @touchstart="onSStart" @touchmove="onSMove" @touchend="onSEnd">
+      <text class="num">{{sText}}</text>
+    </div>
+  </div>
+</template>
+
+<script>
+// 手指每滑过多少像素，数字变化 1
+const STEP = 26
+
+function pad2(n) {
+  return n < 10 ? '0' + n : '' + n
+}
+
+/** 从触摸事件里取纵坐标，不同实现字段名不一样，做个兜底 */
+function yOf(e) {
+  if (!e) return 0
+  let t = null
+  if (e.touches && e.touches.length) t = e.touches[0]
+  else if (e.changedTouches && e.changedTouches.length) t = e.changedTouches[0]
+  if (!t) return 0
+  return typeof t.clientY === 'number' ? t.clientY : (t.pageY || 0)
+}
+
+export default {
+  props: {
+    // 初始值（毫秒）
+    startms: { default: 0 }
+  },
+
+  data: {
+    hIdx: 0,
+    mIdx: 0,
+    sIdx: 0,
+    hText: '00',
+    mText: '00',
+    sText: '00'
+  },
+
+  onInit() {
+    const ms = this.startms > 0 ? this.startms : 0
+    this.hIdx = Math.min(23, Math.floor(ms / 3600000))
+    this.mIdx = Math.floor(ms / 60000) % 60
+    this.sIdx = Math.floor(ms / 1000) % 60
+    this.syncText()
+    this._drag = null
+  },
+
+  // ---------- 对外接口 ----------
+  // 这个运行时没有 this.$child，父页面拿不到组件实例，
+  // 所以取值只能靠 change 事件推送（见 notifyChange），getValue 仅内部用。
+
+  getValue() {
+    return (this.hIdx * 3600 + this.mIdx * 60 + this.sIdx) * 1000
+  },
+
+  // ---------- 内部 ----------
+
+  maxOf(col) {
+    return col === 'h' ? 23 : 59
+  },
+
+  indexOf(col) {
+    if (col === 'h') return this.hIdx
+    if (col === 'm') return this.mIdx
+    return this.sIdx
+  },
+
+  setIndex(col, v) {
+    if (col === 'h') this.hIdx = v
+    else if (col === 'm') this.mIdx = v
+    else this.sIdx = v
+  },
+
+  /** 模板里不能调方法，所以把两位数字先算好 */
+  syncText() {
+    this.hText = pad2(this.hIdx)
+    this.mText = pad2(this.mIdx)
+    this.sText = pad2(this.sIdx)
+  },
+
+  // ---------- 滑动改值 ----------
+  // 上滑 = 手指 y 变小 = startY - y 为正 = 数值增加
+  // 下滑 = 数值减少。到 0 / 23 / 59 就停住，不循环。
+
+  beginDrag(col, y) {
+    this._drag = { col: col, startY: y, startIdx: this.indexOf(col) }
+  },
+
+  moveDrag(y) {
+    if (!this._drag) return
+    const col = this._drag.col
+    const delta = Math.round((this._drag.startY - y) / STEP)
+
+    let v = this._drag.startIdx + delta
+    if (v < 0) v = 0
+    const max = this.maxOf(col)
+    if (v > max) v = max
+
+    if (v !== this.indexOf(col)) {
+      this.setIndex(col, v)
+      this.syncText()
+      this.notifyChange()
+    }
+  },
+
+  endDrag() {
+    // 松手再报一次，保证最终值一定送到父页面
+    if (this._drag) this.notifyChange()
+    this._drag = null
+  },
+
+  /**
+   * 父页面拿不到组件实例（这个运行时没有 this.$child），
+   * 所以只能由组件主动把值推出去。
+   */
+  notifyChange() {
+    this.$emit('change', { ms: this.getValue() })
+  },
+
+  // ---------- 九个触摸入口 ----------
+
+  onHStart(e) { this.beginDrag('h', yOf(e)) },
+  onHMove(e) { this.moveDrag(yOf(e)) },
+  onHEnd() { this.endDrag() },
+
+  onMStart(e) { this.beginDrag('m', yOf(e)) },
+  onMMove(e) { this.moveDrag(yOf(e)) },
+  onMEnd() { this.endDrag() },
+
+  onSStart(e) { this.beginDrag('s', yOf(e)) },
+  onSMove(e) { this.moveDrag(yOf(e)) },
+  onSEnd() { this.endDrag() }
+}
+</script>
+
+<style>
+.picker {
+  width: 190px;
+  height: 64px;
+  flex-direction: row;
+  justify-content: center;
+  align-items: center;
+}
+
+/* 每个数字块都是独立的滑动热区 */
+.seg {
+  width: 48px;
+  height: 60px;
+  border-radius: 12px;
+  background-color: #1c1c1e;
+  justify-content: center;
+  align-items: center;
+}
+
+.num {
+  font-size: 32px;
+  color: #ffffff;
+  font-weight: bold;
+  text-align: center;
+}
+
+/* 不设 height：让 text 盒子贴合行高，靠 .picker 的 align-items: center 垂直居中 */
+.colon {
+  width: 14px;
+  font-size: 26px;
+  color: #48484a;
+  text-align: center;
+}
+</style>

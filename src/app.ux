@@ -1,10 +1,23 @@
 <script>
+import { createStore } from "./utils/store"
+
 export default {
+  // 挂在这里的对象可以被所有页面通过 this.$app.$def 取到，
+  // 这是快应用里唯一可靠的跨页面共享方式（各页面是独立打包的）。
+  store: createStore(),
+
   onCreate() {
+    this.store.init()
     console.log("app created")
   },
+
   onDestroy() {
     console.log("app destroyed")
+  },
+
+  // 把运行时异常打出来，方便在 AIoT-IDE 的日志面板里定位黑屏原因
+  onError(err) {
+    console.error("[app] onError:", JSON.stringify(err))
   }
 }
 </script>

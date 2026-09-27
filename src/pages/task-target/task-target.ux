@@ -1,0 +1,183 @@
+<import name="time-picker" src="../../component/time-picker"></import>
+
+<template>
+  <div class="page">
+    <text class="label">目标坚持时间</text>
+
+    <div class="picker-wrap">
+      <time-picker startms="{{initialMs}}" @change="onPickerChange"></time-picker>
+      <text class="hint">上滑增加 · 下滑减少</text>
+      <text class="err" if="{{errText}}">{{errText}}</text>
+    </div>
+
+    <div class="btns">
+      <div class="btn" @click="onCancel">
+        <text class="btn-text">取消</text>
+      </div>
+      <div class="btn btn-primary" @click="onConfirm">
+        <text class="btn-text">确认</text>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script>
+import router from '@system.router'
+import vibrator from '@system.vibrator'
+import { useStore } from '../../utils/store'
+
+/** 自定义组件事件的 payload 位置在不同实现里不一样，做个兼容 */
+function payloadOf(e) {
+  if (!e) return {}
+  if (e.ms !== undefined) return e
+  if (e.detail && e.detail.ms !== undefined) return e.detail
+  return e
+}
+
+/** 提交失败的原因文案 */
+const REASON_TEXT = {
+  'no-draft': '任务草稿已失效，请返回重试',
+  'empty': '标题不能为空',
+  'limit': '最多只能有 20 个任务',
+  'missing': '该任务已不存在'
+}
+
+export default {
+  private: {
+    initialMs: 0,
+    lastMs: 0,
+    errText: ''
+  },
+
+  onInit() {
+    try {
+      this.store = useStore(this)
+      const draft = this.store.getDraft()
+      this.initialMs = draft && draft.targetMs > 0 ? draft.targetMs : 0
+      // 用户没动过选择器时，确认就该用初始值
+      this.lastMs = this.initialMs
+    } catch (e) {
+      this.errText = '初始化异常：' + (e && e.message ? e.message : String(e))
+      console.error('[task-target] onInit 异常', e)
+    }
+  },
+
+  /** 组件在数值变化和松手时都会推一次，这里只管接住 */
+  onPickerChange(e) {
+    const ms = payloadOf(e).ms
+    if (typeof ms !== 'number') {
+      this.errText = '选择器事件里没有 ms 字段'
+      return
+    }
+    this.lastMs = ms
+  },
+
+  onConfirm() {
+    try {
+      const res = this.store.commitDraft(this.lastMs)
+      if (!res || !res.ok) {
+        const reason = res ? res.reason : 'unknown'
+        this.errText = REASON_TEXT[reason] || ('保存失败：' + reason)
+        return
+      }
+      this.errText = ''
+      vibrator.vibrate({ mode: 'short' })
+      this.goHome()
+    } catch (e) {
+      this.errText = '确认异常：' + (e && e.message ? e.message : String(e))
+      console.error('[task-target] onConfirm 异常', e)
+    }
+  },
+
+  onCancel() {
+    this.store.discardDraft()
+    this.goHome()
+  },
+
+  /**
+   * 回主页。新建链路是 主页→标题→本页，编辑链路是 主页→编辑→标题→本页，
+   * 层数不一样，所以不逐层 back，直接把页面栈清掉再 replace 回主页。
+   */
+  goHome() {
+    try {
+      router.clear()
+      router.replace({ uri: '/pages/index' })
+    } catch (e) {
+      console.error('[task-target] 清栈失败，退化为逐层返回', e)
+      router.back()
+    }
+  }
+}
+</script>
+
+<style>
+/*
+ * 安全区同主页：顶部 38px 下移 + 30px 左右内缩，底部 44px 避让
+ * （详见 architecture.md §11.2）
+ */
+.page {
+  width: 100%;
+  height: 100%;
+  flex-direction: column;
+  align-items: center;
+  background-color: #000000;
+}
+
+.label {
+  margin-top: 46px;
+  font-size: 22px;
+  color: #ffffff;
+  font-weight: bold;
+}
+
+.picker-wrap {
+  flex: 1;
+  width: 100%;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+}
+
+.hint {
+  margin-top: 18px;
+  font-size: 14px;
+  color: #48484a;
+}
+
+.err {
+  margin-top: 10px;
+  padding-left: 20px;
+  padding-right: 20px;
+  font-size: 14px;
+  color: #ff453a;
+  text-align: center;
+}
+
+.btns {
+  width: 100%;
+  flex-direction: row;
+  padding-left: 34px;
+  padding-right: 34px;
+  margin-bottom: 46px;
+}
+
+.btn {
+  flex: 1;
+  height: 40px;
+  border-radius: 10px;
+  background-color: #2c2c2e;
+  justify-content: center;
+  align-items: center;
+  margin-right: 8px;
+}
+
+.btn-primary {
+  background-color: #0a84ff;
+  margin-right: 0px;
+}
+
+.btn-text {
+  font-size: 17px;
+  color: #ffffff;
+}
+</style>

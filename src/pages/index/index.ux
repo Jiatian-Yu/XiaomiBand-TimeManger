@@ -1,100 +1,324 @@
-<import name="task-item" src="../../component/task-item"></import>
-
 <template>
-  <div class="demo-page">
+  <div class="page">
     <div class="header">
-      <text>任务列表</text>
+      <text class="header-title">任务清单</text>
+      <div class="add-btn" @click="onAdd">
+        <text class="add-icon">＋</text>
+      </div>
     </div>
 
-    <div class="content-container">
-      <task-item title="hello"></task-item>
-      <text>123</text>
-    </div>
+    <scroll class="list" scroll-y="{{true}}">
+      <div class="card" for="{{item in rows}}" @longpress="onLongPress(item.id)">
+        <div class="row-top">
+          <text class="title">{{item.title}}</text>
+          <text class="status {{item.statusClass}}">{{item.statusText}}</text>
+        </div>
+
+        <text class="elapsed">{{item.elapsedText}} / {{item.targetText}}</text>
+
+        <div class="bar-wrap">
+          <div class="bar {{item.done ? 'bar-done' : ''}}" style="width: {{item.percent}}%"></div>
+        </div>
+
+        <div class="btns">
+          <div class="btn btn-primary" @click="onAction(item.id, item.btnAction)">
+            <text class="btn-text">{{item.btnLabel}}</text>
+          </div>
+          <div class="btn" @click="onAction(item.id, 'reset')">
+            <text class="btn-text">重置</text>
+          </div>
+          <div class="btn btn-last" @click="onOpenTarget(item.id)">
+            <text class="btn-text">目标</text>
+          </div>
+        </div>
+      </div>
+
+      <div class="empty" if="{{rows.length === 0}}">
+        <text class="empty-text">还没有任务</text>
+        <text class="empty-text">点右上角 ＋ 添加</text>
+      </div>
+    </scroll>
   </div>
 </template>
 
 <script>
-import router from "@system.router"
+import router from '@system.router'
+import prompt from '@system.prompt'
+import vibrator from '@system.vibrator'
+import { useStore } from '../../utils/store'
+import { MAX_TASKS } from '../../utils/model'
 
 export default {
-  // 页面级组件的数据模型，影响传入数据的覆盖机制：private内定义的属性不允许被覆盖
   private: {
-    title: "hello"
+    rows: []
   },
 
   onInit() {
-    console.error('onInit');
+    this.store = useStore(this)
+    this.timer = null
   },
 
-  onReady() {
-    console.error('onReady');
-  },
-
-  // 在界面初始化时加载所有的任务清单
-  async loadData() {
-    const res = await fetch("../../data.json");
-    const todoList = await res.json();
-
-    document.getElementById();
-    return todoList;
-  },
-
-  routeDetail() {
-    // 跳转到应用内的某个页面，router用法详见：文档->接口->页面路由
-    router.push({
-      uri: "/pages/detail"
+  onShow() {
+    // 兜底：即使订阅漏掉某次通知，回到页面也一定是新数据
+    this.refresh()
+    this.store.reload().then(() => {
+      // 补算离屏期间是否已经达标，不然要等下一次 tick 才变「完成」
+      const res = this.store.tick()
+      if (res.completed) {
+        vibrator.vibrate({ mode: 'long' })
+      }
+      this.refresh()
+      this.syncTimer()
     })
+  },
+
+  onHide() {
+    // 页面不可见时彻底停表，回到页面再用 runningSince 一次性算准
+    this.stopTimer()
+  },
+
+  onDestroy() {
+    this.stopTimer()
+  },
+
+  // ---------- 视图 ----------
+
+  refresh() {
+    this.rows = this.store.buildRows(Date.now())
+  },
+
+  // ---------- 定时器 ----------
+
+  stopTimer() {
+    if (this.timer) {
+      clearInterval(this.timer)
+      this.timer = null
+    }
+  },
+
+  syncTimer() {
+    this.stopTimer()
+    if (!this.store.hasRunning()) return
+    this.timer = setInterval(() => {
+      this.onTick()
+    }, 1000)
+  },
+
+  onTick() {
+    const res = this.store.tick()
+    if (res.completed) {
+      vibrator.vibrate({ mode: 'long' })
+    }
+    this.refresh()
+    if (!this.store.hasRunning()) this.stopTimer()
+  },
+
+  // ---------- 交互 ----------
+
+  onAction(id, action) {
+    if (this.store.emitAction(id, action)) {
+      vibrator.vibrate({ mode: 'short' })
+    }
+    this.refresh()
+    this.syncTimer()
+  },
+
+  onLongPress(id) {
+    if (this.store.beginEdit(id)) {
+      router.push({ uri: '/pages/task-edit' })
+    }
+  },
+
+  onOpenTarget(id) {
+    if (this.store.beginEdit(id)) {
+      router.push({ uri: '/pages/task-target' })
+    }
+  },
+
+  onAdd() {
+    if (this.store.count() >= MAX_TASKS) {
+      prompt.showToast({ message: '最多 ' + MAX_TASKS + ' 个任务' })
+      return
+    }
+    this.store.beginCreate()
+    router.push({ uri: '/pages/task-title' })
   }
 }
-
-
 </script>
 
 <style>
-.demo-page {
-  display: flex;
+/*
+ * ===== 屏幕安全区：小米手环10 是跑道形（左右直边，上下圆弧）=====
+ * 上下圆弧会切掉内容，所以顶部既要下移(margin-top)，又要左右内缩(padding)，
+ * 因为越靠近上下边缘，可用宽度越窄。
+ * 下面这三组数值就是全部可调项，真机上不合适直接改这里。
+ *   SAFE-TOP    = 38px   顶部圆弧避让
+ *   SAFE-BOTTOM = 44px   底部圆弧避让（列表内边距，保证最后一张卡片能滚出圆弧）
+ *   SAFE-SIDE   = 30px   顶部/底部圆弧区的左右内缩
+ */
+.page {
+  width: 100%;
+  height: 100%;
   flex-direction: column;
-  justify-content: flex-start;
-  align-items: center;
-  background-color: black;
+  background-color: #000000;
 }
 
+/* ---------- 头部（位于顶部圆弧区内，需避让） ---------- */
+
 .header {
-  display: flex;
-  background-color: blueviolet;
   width: 100%;
-  min-height: 80px;
-  flex-direction: column;
+  height: 50px;
+  margin-top: 38px;
+  padding-left: 30px;
+  padding-right: 30px;
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.header-title {
+  font-size: 23px;
+  color: #ffffff;
+  font-weight: bold;
+}
+
+.add-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 17px;
+  background-color: #0a84ff;
   justify-content: center;
   align-items: center;
 }
 
-.content-container {
-  background-color: #09ba07;
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-start;
-  align-items: center;
+.add-icon {
+  font-size: 26px;
+  color: #ffffff;
+}
+
+/* ---------- 列表（左右是直边，可以接近满宽） ---------- */
+
+.list {
+  flex: 1;
   width: 100%;
-  gap: 5px;
-  padding: 12px;
+  flex-direction: column;
+  padding-left: 10px;
+  padding-right: 10px;
+  padding-bottom: 44px;
+}
+
+.card {
+  width: 100%;
+  background-color: #1c1c1e;
+  border-radius: 12px;
+  padding: 10px;
+  margin-bottom: 8px;
+  flex-direction: column;
+}
+
+.row-top {
+  width: 100%;
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.title {
+  font-size: 21px;
+  color: #ffffff;
+  font-weight: bold;
   flex: 1;
 }
 
-.tasks {
+.status {
+  font-size: 15px;
+  margin-left: 6px;
+}
+
+.st-idle {
+  color: #8e8e93;
+}
+
+.st-running {
+  color: #30d158;
+}
+
+.st-paused {
+  color: #ff9f0a;
+}
+
+.st-done {
+  color: #0a84ff;
+}
+
+.elapsed {
+  font-size: 18px;
+  color: #8e8e93;
+  margin-top: 4px;
+}
+
+.bar-wrap {
   width: 100%;
-  background-color: red;
-  min-height: 120px;
-  border-radius: 5px;
+  height: 6px;
+  border-radius: 3px;
+  background-color: #2c2c2e;
+  margin-top: 8px;
+}
+
+.bar {
+  height: 6px;
+  border-radius: 3px;
+  background-color: #30d158;
+}
+
+.bar-done {
+  background-color: #0a84ff;
+}
+
+/* ---------- 按钮 ---------- */
+
+.btns {
+  width: 100%;
+  flex-direction: row;
+  margin-top: 10px;
 }
 
 .btn {
-  width: 200px;
-  height: 40px;
-  margin-top: 20px;
-  border-radius: 5px;
-  background-color: #09ba07;
-  font-size: 20px;
+  flex: 1;
+  height: 38px;
+  border-radius: 9px;
+  background-color: #2c2c2e;
+  justify-content: center;
+  align-items: center;
+  margin-right: 6px;
+}
+
+.btn-primary {
+  flex: 1.6;
+  background-color: #0a84ff;
+}
+
+.btn-last {
+  margin-right: 0px;
+}
+
+.btn-text {
+  font-size: 16px;
   color: #ffffff;
+}
+
+/* ---------- 空状态 ---------- */
+
+.empty {
+  width: 100%;
+  flex-direction: column;
+  align-items: center;
+  margin-top: 50px;
+}
+
+.empty-text {
+  font-size: 18px;
+  color: #48484a;
+  margin-top: 6px;
 }
 </style>

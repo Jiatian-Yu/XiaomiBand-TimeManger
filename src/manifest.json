@@ -11,6 +11,21 @@
   "features": [
     {
       "name": "system.router"
+    },
+    {
+      "name": "system.storage"
+    },
+    {
+      "name": "system.prompt"
+    },
+    {
+      "name": "system.vibrator"
+    },
+    {
+      "name": "system.device"
+    },
+    {
+      "name": "system.file"
     }
   ],
   "config": {
@@ -23,8 +38,14 @@
       "pages/index": {
         "component": "index"
       },
-      "pages/detail": {
-        "component": "detail"
+      "pages/task-title": {
+        "component": "task-title"
+      },
+      "pages/task-target": {
+        "component": "task-target"
+      },
+      "pages/task-edit": {
+        "component": "task-edit"
       }
     }
   }

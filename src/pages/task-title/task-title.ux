@@ -1,0 +1,197 @@
+<import name="input-method" src="../../component/InputMethod/InputMethod"></import>
+
+<template>
+  <div class="page">
+    <text class="caption">任务标题</text>
+
+    <div class="display">
+      <text class="display-text">{{displayText}}</text>
+    </div>
+
+    <div class="actions">
+      <div class="btn" @click="onCancel">
+        <text class="btn-text">取消</text>
+      </div>
+      <div class="btn btn-primary" @click="onConfirm">
+        <text class="btn-text">确认</text>
+      </div>
+    </div>
+
+    <!--
+      键盘自带拼音/英文/日文与词库，宿主只负责维护文本：
+      complete = 追加一段文本，delete = 删末尾一个字符（组件内部缓冲已空时才抛）
+    -->
+    <input-method
+      id="im"
+      hide="{{kbHidden}}"
+      maxlength="{{maxLen}}"
+      keyboardtype="QWERTY"
+      screentype="{{screenShape}}"
+      dictionarypath="/component/InputMethod/assets/dictionary/"
+      vibratemode="short"
+      @complete="onKbComplete"
+      @delete="onKbDelete">
+    </input-method>
+  </div>
+</template>
+
+<script>
+import router from '@system.router'
+import prompt from '@system.prompt'
+import device from '@system.device'
+import { useStore } from '../../utils/store'
+import { MAX_TITLE_LEN } from '../../utils/model'
+
+/** 自定义组件事件在不同实现里 payload 位置不同，做个兼容 */
+function payloadOf(e) {
+  if (!e) return {}
+  if (e.content !== undefined) return e
+  if (e.detail && e.detail.content !== undefined) return e.detail
+  return e
+}
+
+export default {
+  private: {
+    text: '',
+    displayText: '',
+    kbHidden: false,
+    maxLen: MAX_TITLE_LEN,
+    // 键盘的 screentype 取值与 device.screenShape 是同一套枚举，运行时直接取
+    screenShape: 'pill-shaped'
+  },
+
+  onInit() {
+    this.store = useStore(this)
+
+    // 编辑模式下用原标题作为初值（键盘内部缓冲永远从空开始，两者互不干扰）
+    const draft = this.store.getDraft()
+    if (draft && draft.title) {
+      this.text = draft.title
+    }
+    this.syncDisplay()
+
+    device.getInfo({
+      success: (data) => {
+        if (data && data.screenShape) {
+          this.screenShape = data.screenShape
+          console.log('[task-title] screenShape =', data.screenShape,
+            'screen =', data.screenWidth + 'x' + data.screenHeight)
+        }
+      },
+      fail: () => {
+        console.error('[task-title] device.getInfo 失败，键盘沿用默认 screentype')
+      }
+    })
+  },
+
+  syncDisplay() {
+    this.displayText = this.text ? this.text + '▌' : '▌'
+  },
+
+  // ---------- 键盘回调 ----------
+
+  onKbComplete(e) {
+    const content = payloadOf(e).content
+    if (!content) return
+    if (this.text.length + content.length > MAX_TITLE_LEN) {
+      prompt.showToast({ message: '标题最多 ' + MAX_TITLE_LEN + ' 个字' })
+      return
+    }
+    this.text = this.text + content
+    this.syncDisplay()
+  },
+
+  onKbDelete() {
+    if (!this.text.length) return
+    this.text = this.text.slice(0, -1)
+    this.syncDisplay()
+  },
+
+  // ---------- 按钮 ----------
+
+  onConfirm() {
+    const title = (this.text || '').trim()
+    if (!title) {
+      prompt.showToast({ message: '标题不能为空' })
+      return
+    }
+    this.store.setDraftTitle(title)
+    router.push({ uri: '/pages/task-target' })
+  },
+
+  onCancel() {
+    // 新建：草稿作废；编辑：草稿还要留给编辑页继续用，不能丢
+    const draft = this.store.getDraft()
+    if (draft && draft.mode === 'create') {
+      this.store.discardDraft()
+    }
+    router.back()
+  }
+}
+</script>
+
+<style>
+/*
+ * 上半部分必须给键盘让位：InputMethod 的根节点是 position:absolute; bottom:0，
+ * pill 屏键盘高约 305px，再算上键盘上方那行拼音小字，可用高度只有 180px 左右。
+ * 所以这里所有元素加起来不能超过 ~170px。
+ */
+.page {
+  width: 100%;
+  height: 100%;
+  flex-direction: column;
+  align-items: center;
+  background-color: #000000;
+}
+
+.caption {
+  margin-top: 46px;
+  font-size: 15px;
+  color: #48484a;
+}
+
+.display {
+  width: 100%;
+  min-height: 56px;
+  margin-top: 4px;
+  padding-left: 26px;
+  padding-right: 26px;
+  justify-content: center;
+  align-items: center;
+}
+
+.display-text {
+  font-size: 22px;
+  color: #ffffff;
+  font-weight: bold;
+  text-align: center;
+}
+
+.actions {
+  width: 100%;
+  flex-direction: row;
+  margin-top: 10px;
+  padding-left: 32px;
+  padding-right: 32px;
+}
+
+.btn {
+  flex: 1;
+  height: 38px;
+  border-radius: 9px;
+  background-color: #2c2c2e;
+  justify-content: center;
+  align-items: center;
+  margin-right: 8px;
+}
+
+.btn-primary {
+  background-color: #0a84ff;
+  margin-right: 0px;
+}
+
+.btn-text {
+  font-size: 16px;
+  color: #ffffff;
+}
+</style>
