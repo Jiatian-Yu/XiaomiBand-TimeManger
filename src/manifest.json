@@ -1,6 +1,6 @@
 {
   "package": "com.application.watch.demo",
-  "name": "TimeManager",
+  "name": "时间管理",
   "versionName": "1.0.0",
   "versionCode": 1,
   "minPlatformVersion": 1000,
