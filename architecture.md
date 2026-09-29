@@ -53,12 +53,21 @@ design.md §2.2 说「未开始 / 进行中 / 完成」，但 §2.7 又出现了
 
 即「暂停」是「进行中」的子态：**对用户而言仍是「进行中」这一类**，但按钮文案不同。
 
-### D2. 「完成」的触发条件
+### D2. 达标**不停表**，只打标记
 
-design.md 未定义任务何时变为「完成」。采用：**`已坚持时间 >= 目标坚持时间` 时自动置为 `done`**，同时停止计时、触发一次 `vibrate({mode:'long'})`、任务条目标题变蓝并打勾。
+> 本条已按实际使用反馈**改过一次**。原设计是「达到目标时间就自动置为 done 并停表」，
+> 实际使用后用户要求：**达标后继续计时，除非主动暂停，超过目标时间也没关系**。
 
-* 目标时间设为 `00:00:00` 时，视为「纯秒表」，**永不自动完成**。
-* `done` 状态下按钮显示「重新开始」，点击 = 重置归零并立即开始。
+采用：
+
+* `已坚持时间 >= 目标坚持时间` 时**不改变状态**，只是打一个 `reachedAt` 标记，
+  并触发一次 `vibrate({mode:'long'})`。
+* 任务**继续计时**，状态仍是 `running`，主按钮仍是「暂停」，用户可以一直让它走。
+* 「已达标」是**纯展示态**：由 `hasReached(task, now)` 每次渲染时算出来，
+  覆盖掉状态文案和徽标颜色，进度条封顶 100%（时间数字继续涨）。
+* 目标时间设为 `00:00:00` 时视为「纯秒表」，**永远不会达标**。
+* `STATUS.DONE` 已废弃，仅保留用于识别并迁移旧数据（`normalizeTask` 会把
+  `done` 迁成 `paused`，保留已累计的时间，让用户能继续）。
 
 ### D3. 计时的语义：跨后台 / 被杀进程
 
@@ -308,6 +317,8 @@ erDiagram
 
 ## 6. 任务状态机
 
+只有 **3 个真实状态**。「已达标」是**渲染时算出来的展示态**，不是状态机的一环（见 §D2）。
+
 ```mermaid
 stateDiagram-v2
     direction LR
@@ -316,17 +327,17 @@ stateDiagram-v2
     idle --> running : 点击「开始」
     running --> paused : 点击「暂停」
     paused --> running : 点击「继续」
-    paused --> idle : 点击「重置」
     running --> idle : 点击「重置」
-    running --> done : 已坚持 >= 目标
-    paused --> done : 已坚持 >= 目标
-    done --> running : 点击「重新开始」并归零
-    idle --> done : 手动标记完成（预留）
+    paused --> idle : 点击「重置」
 
     idle --> idle : 跨天自动重置
     running --> idle : 跨天自动重置
     paused --> idle : 跨天自动重置
-    done --> idle : 跨天自动重置
+
+    note right of running
+        达标不改状态、不停表
+        只设置 reachedAt 并振动一次
+    end note
 ```
 
 ### 6.1 状态迁移表
@@ -336,10 +347,9 @@ stateDiagram-v2
 | `idle` | 开始 | `running` | `runningSince = now` |
 | `running` | 暂停 | `paused` | `accumulatedMs += now - runningSince`；`runningSince = null` |
 | `paused` | 继续 | `running` | `runningSince = now` |
-| 任意 | 重置 | `idle` | `accumulatedMs = 0`；`runningSince = null` |
-| `running`/`paused` | 达到目标 | `done` | 累计封顶到目标值、停表、长振动 |
-| `done` | 重新开始 | `running` | 先归零，再 `runningSince = now` |
-| 任意 | 跨天 | `idle` | 三个时间字段全部归零 |
+| 任意 | 重置 | `idle` | `accumulatedMs = 0`、`runningSince = null`、`reachedAt = null` |
+| `running`/`paused` | 达到目标 | **不变** | 只设 `reachedAt`（一次性）+ 长振动，**继续计时** |
+| 任意 | 跨天 | `idle` | 四个字段（含 `reachedAt`）全部归零 |
 
 ### 6.2 迁移规则集中在一处
 
@@ -359,10 +369,11 @@ flowchart TD
     D --> E["store.tick()"]
     E --> F["计算 elapsed<br/>= accumulated + now - runningSince"]
     F --> G{"elapsed >= targetMs<br/>且 targetMs > 0 ?"}
-    G -- 是 --> H["status = done<br/>停表 + vibrate long"]
+    G -- 是 --> H["首次达标：标记 reachedAt<br/>+ vibrate long<br/>（不改状态、不停表）"]
     G -- 否 --> I["更新视图 elapsed 文本"]
-    H --> J{"还有 running 任务?"}
-    I --> J
+    H --> I2["更新视图 elapsed 文本<br/>状态徽标显示「已达标」"]
+    I --> J{"还有 running 任务?"}
+    I2 --> J
     J -- 否 --> K["clearInterval"]
     J -- 是 --> D
     A2["页面 onHide"] --> L["clearInterval<br/>避免后台空转"]
@@ -388,6 +399,35 @@ flowchart TD
     E --> F["meta.lastDate = today"]
     F --> G["写存储 + 通知视图刷新"]
 ```
+
+#### ⚠️ 存储铁律：**读失败时绝对不许落盘**
+
+这是真机上踩过的**数据丢失 bug**，务必保持：
+
+```js
+// ❌ 错误写法（曾经的实现）
+hydrate(res[0], res[1])            // 读失败 → tasks 变成 []
+const changed = checkDailyReset()
+if (changed) persist()             // ← 把空数组写回存储，真实数据永久没了
+
+// ✅ 正确写法
+const ok = await loadState()       // 两个 key 都读成功才覆盖内存
+if (ok && checkDailyReset()) persist()   // 读失败就保留内存现状，绝不回写
+```
+
+后果链条：一次临时读取失败 → 内存被清空 → 跨天重置触发 `persist()` →
+**空数组被固化进存储** → 第二天打开任务全没了，且再也恢复不了。
+
+对应地，`storage.getItem` 的返回值必须区分三态，不能把「读失败」和「读到空」混为一谈：
+
+| 情况 | 返回 | 调用方该怎么办 |
+| --- | --- | --- |
+| 读取成功（含 key 不存在） | `{ok: true, value}` | 正常使用这个值 |
+| 读取失败（平台报错） | `{ok: false}` | **保留现有内存数据，不要覆盖** |
+| 值存在但 JSON 解析不了 | `{ok: false, corrupt: true}` | 同上，并按损坏处理 |
+
+另外写盘用「脏标记 + 串行」：写入过程中又有改动会自动再写一轮，
+避免并发写同一个 key，也不会丢掉最后一次改动。
 
 关键点：
 
@@ -748,8 +788,12 @@ sequenceDiagram
 | --- | --- | --- |
 | `SAFE-TOP` | 38px | 顶部避让，用 `margin-top` 加在页面第一个元素上 |
 | `SAFE-BOTTOM` | 44px | 底部避让，用 `padding-bottom` 加在滚动容器上，保证最后一张卡片能滚出圆弧 |
-| `SAFE-SIDE` | 30px | **圆弧区**内元素的左右内缩（如顶部标题栏） |
+| `SAFE-SIDE` | 30px | **圆弧区**内元素的左右内缩（实际只有 `task-target` 的按钮行还在用；主页标题已改为居中窄标题，不再需要） |
 | 列表左右内边距 | 10px | 列表处于直边区，可以接近满宽 |
+
+> 主页的「新增任务」按钮**不放顶部**，而是居中跟在最后一个任务卡片后面、随列表滚动。
+> 这样顶部只剩一行居中的窄标题（4 个字 ≈ 92px，远小于 y=38 处的 ~160px 可用宽度），
+> 圆弧区几乎不再需要横向让位。
 
 **为什么不用 `.page { padding }`**：快应用的盒模型不保证是 `border-box`，
 给根节点加 padding 可能把页面撑高导致溢出。改用「首元素 margin + 滚动容器 padding」。

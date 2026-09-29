@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<style>
+  * { box-sizing: border-box; }
+  body { margin:0; background:#000; color:#8a8a8e; font:12px "Segoe UI",sans-serif; }
+  h2 { font-size:12px; font-weight:600; letter-spacing:.08em; text-transform:uppercase;
+       margin:0; padding:18px 24px 8px; color:#5a5a5e; }
+  .row { display:flex; align-items:flex-end; gap:36px; padding:0 24px 22px; }
+  .cell { text-align:center; }
+  .cell img { display:block; margin:0 auto; }
+  .cap { font-size:11px; opacity:.55; margin-top:8px; }
+  .alts { display:flex; gap:28px; padding:0 24px 24px; border-top:1px solid #1c1c1e; padding-top:22px; }
+  .alts .cap { margin-top:6px; }
+  .hint { padding:0 24px 22px; font-size:11px; color:#48484a; }
+</style></head>
+<body>
+  <h2>最终图标（src/common/logo.svg）</h2>
+  <div class="row">
+    <div class="cell"><img src="../src/common/logo.svg" width="256" height="256"><div class="cap">256</div></div>
+    <div class="cell"><img src="../src/common/logo.svg" width="128" height="128"><div class="cap">128</div></div>
+    <div class="cell"><img src="../src/common/logo.svg" width="64" height="64"><div class="cap">64</div></div>
+    <div class="cell"><img src="../src/common/logo.svg" width="48" height="48"><div class="cap">48</div></div>
+  </div>
+  <h2>备选方案</h2>
+  <div class="alts">
+    <div class="cell"><img src="v2.svg" width="128" height="128"><div class="cap">v2 蓝绿 · 白环</div></div>
+    <div class="cell"><img src="v3.svg" width="128" height="128"><div class="cap">v3 浅色 · 渐变环</div></div>
+    <div class="cell"><img src="v4.svg" width="128" height="128"><div class="cap">v4 无表冠</div></div>
+  </div>
+  <div class="hint">备选源文件在同目录下，替换时把对应文件内容覆盖到 src/common/logo.svg 即可。</div>
+</body></html>

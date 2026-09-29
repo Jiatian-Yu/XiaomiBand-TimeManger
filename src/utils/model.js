@@ -3,11 +3,12 @@
  * 本文件不依赖任何平台 API，可脱离快应用环境单独测试。
  */
 
-/** 内部状态（4 个）。paused 对用户仍展示为「进行中」，只是按钮文案不同。 */
+/** 内部状态。paused 对用户仍展示为「进行中」，只是按钮文案不同。 */
 export const STATUS = {
   IDLE: 'idle',
   RUNNING: 'running',
   PAUSED: 'paused',
+  /** @deprecated 达标不再停表，此状态已废弃，仅用于识别并迁移旧数据 */
   DONE: 'done'
 }
 
@@ -16,7 +17,7 @@ export const STATUS_TEXT = {
   idle: '未开始',
   running: '进行中',
   paused: '进行中',
-  done: '完成'
+  done: '已达标'
 }
 
 /** 状态对应的样式类 */
@@ -31,8 +32,7 @@ export const STATUS_CLASS = {
 const BUTTON_BY_STATUS = {
   idle: { label: '开始', action: 'start' },
   running: { label: '暂停', action: 'pause' },
-  paused: { label: '继续', action: 'resume' },
-  done: { label: '重新开始', action: 'restart' }
+  paused: { label: '继续', action: 'resume' }
 }
 
 export const MAX_TASKS = 20
@@ -62,16 +62,23 @@ export function elapsedOf(task, now) {
 }
 
 /**
- * 达标检测：目标为 0 时视作纯秒表，永不自动完成。
- * @returns {boolean} 是否发生了状态变化
+ * 是否已达标。目标为 0 时视作纯秒表，永远不算达标。
+ * 纯查询，不改任何状态。
  */
-export function checkComplete(task, now) {
-  if (task.status !== STATUS.RUNNING && task.status !== STATUS.PAUSED) return false
+export function hasReached(task, now) {
   if (!task.targetMs || task.targetMs <= 0) return false
-  if (elapsedOf(task, now) < task.targetMs) return false
-  task.accumulatedMs = task.targetMs
-  task.runningSince = null
-  task.status = STATUS.DONE
+  return elapsedOf(task, now) >= task.targetMs
+}
+
+/**
+ * 首次达标时打个标记，用于触发一次振动。
+ * 达标**不停表**，任务会继续计时，直到用户主动暂停（产品要求）。
+ * @returns {boolean} 是否刚刚首次达标
+ */
+export function markReached(task, now) {
+  if (task.reachedAt) return false
+  if (!hasReached(task, now)) return false
+  task.reachedAt = now
   return true
 }
 
@@ -101,17 +108,13 @@ export function applyAction(task, action, now) {
       return true
 
     case 'reset':
-      if (task.status === STATUS.IDLE && !task.accumulatedMs && !task.runningSince) return false
+      if (task.status === STATUS.IDLE && !task.accumulatedMs && !task.runningSince && !task.reachedAt) {
+        return false
+      }
       task.accumulatedMs = 0
       task.runningSince = null
+      task.reachedAt = null
       task.status = STATUS.IDLE
-      return true
-
-    case 'restart':
-      // 「完成」后重新开始：归零并立刻计时
-      task.accumulatedMs = 0
-      task.runningSince = now
-      task.status = STATUS.RUNNING
       return true
 
     default:
@@ -123,6 +126,7 @@ export function applyAction(task, action, now) {
 export function resetForNewDay(task, now) {
   task.accumulatedMs = 0
   task.runningSince = null
+  task.reachedAt = null
   task.status = STATUS.IDLE
   task.updatedAt = now
 }
@@ -138,6 +142,7 @@ export function createTask(title, targetMs, order) {
     targetMs: targetMs > 0 ? targetMs : 0,
     accumulatedMs: 0,
     runningSince: null,
+    reachedAt: null,
     status: STATUS.IDLE,
     order: order || 0,
     createdAt: now,
@@ -153,8 +158,18 @@ export function normalizeTask(raw) {
   if (typeof task.targetMs !== 'number' || task.targetMs < 0) task.targetMs = 0
   if (typeof task.accumulatedMs !== 'number' || task.accumulatedMs < 0) task.accumulatedMs = 0
   if (typeof task.runningSince !== 'number') task.runningSince = null
-  if (!STATUS_TEXT[task.status]) task.status = STATUS.IDLE
+  if (typeof task.reachedAt !== 'number') task.reachedAt = null
   if (typeof task.order !== 'number') task.order = 0
+
+  // 旧版本达标会置为 done 并停表；现在达标不停表，迁移成 paused 让用户能继续
+  if (task.status === STATUS.DONE) {
+    task.status = STATUS.PAUSED
+    task.runningSince = null
+  }
+  if (!BUTTON_BY_STATUS[task.status] && task.status !== STATUS.IDLE) {
+    task.status = STATUS.IDLE
+    task.runningSince = null
+  }
   return task
 }
 

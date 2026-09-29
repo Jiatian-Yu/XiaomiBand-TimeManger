@@ -1,11 +1,12 @@
 /**
  * 全局状态单例：任务集合 + 状态机 + 计时 + 草稿。
  *
- * 为什么不用「ES Module 单例」：
+ * ⚠️ 为什么不用「ES Module 单例」：
  * aiot-toolkit 会把每个页面编译成各自独立的 webpack 模块表
  * （每个页面的产物 js 里都各有一份 __webpack_modules__），
  * 所以同一个 store.js 在不同页面里是两份实例，状态根本共享不了。
  * 因此实例挂在 app.ux 导出的对象上，通过 this.$app.$def 跨页面共享。
+ * （已在真机验证：各页面拿到的是同一个实例）
  */
 import { getItem, setItem } from './storage'
 import {
@@ -17,9 +18,10 @@ import {
   byOrder,
   buttonAction,
   buttonLabel,
-  checkComplete,
   createTask,
   elapsedOf,
+  hasReached,
+  markReached,
   normalizeTask,
   resetForNewDay
 } from './model'
@@ -37,6 +39,11 @@ export function createStore() {
   let started = false
   let initPromise = null
 
+  // 写盘用「脏标记 + 串行」：写入过程中又有改动会自动再写一轮，
+  // 既不会并发写同一个 key，也不会丢掉最后一次改动。
+  let dirty = false
+  let writing = false
+
   // ---------- 内部工具 ----------
 
   function notify() {
@@ -49,9 +56,25 @@ export function createStore() {
     }
   }
 
+  function flush() {
+    if (!dirty) {
+      writing = false
+      return
+    }
+    dirty = false
+    Promise.all([setItem(KEY_TASKS, tasks), setItem(KEY_META, meta)]).then(flush, function (e) {
+      console.error('[store] 持久化失败', e)
+      // 保留 dirty，下次改动会重试
+      dirty = true
+      writing = false
+    })
+  }
+
   function persist() {
-    setItem(KEY_TASKS, tasks)
-    setItem(KEY_META, meta)
+    dirty = true
+    if (writing) return
+    writing = true
+    flush()
   }
 
   function findIndex(id) {
@@ -76,12 +99,29 @@ export function createStore() {
     return true
   }
 
-  function hydrate(rawTasks, rawMeta) {
-    const list = Array.isArray(rawTasks) ? rawTasks : []
-    tasks = list.map(normalizeTask)
-    meta = rawMeta && typeof rawMeta === 'object' ? rawMeta : { lastDate: '', schema: SCHEMA_VERSION }
-    if (typeof meta.lastDate !== 'string') meta.lastDate = ''
-    meta.schema = SCHEMA_VERSION
+  /**
+   * 从存储装载状态。
+   * ⚠️ 关键：只有**两个 key 都读成功**才覆盖内存。
+   * 读失败就用现有内存继续跑 —— 否则一次临时读失败会被后续 persist()
+   * 固化成永久数据丢失（真实踩过的坑：第二天冷启动任务全没了）。
+   * @returns {Promise<boolean>} 是否成功装载
+   */
+  function loadState() {
+    return Promise.all([getItem(KEY_TASKS), getItem(KEY_META)]).then(function (res) {
+      const t = res[0]
+      const m = res[1]
+      if (!t.ok || !m.ok) {
+        console.error('[store] 存储读取失败，保留内存中的现有数据，本次不覆盖也不回写',
+          'tasks.ok=' + t.ok, 'meta.ok=' + m.ok)
+        return false
+      }
+
+      tasks = Array.isArray(t.value) ? t.value.map(normalizeTask) : []
+      meta = (m.value && typeof m.value === 'object') ? m.value : { lastDate: '', schema: SCHEMA_VERSION }
+      if (typeof meta.lastDate !== 'string') meta.lastDate = ''
+      meta.schema = SCHEMA_VERSION
+      return true
+    })
   }
 
   // ---------- 生命周期 ----------
@@ -89,14 +129,14 @@ export function createStore() {
   /** 冷启动调用一次；重复调用返回同一个 Promise */
   function init() {
     if (initPromise) return initPromise
-    initPromise = Promise.all([getItem(KEY_TASKS, []), getItem(KEY_META, null)]).then(function (res) {
-      hydrate(res[0], res[1])
+    initPromise = loadState().then(function (ok) {
       const now = Date.now()
-      const changed = checkDailyReset(now)
+      const changed = ok ? checkDailyReset(now) : false
       started = true
-      if (changed) persist()
+      // 只有读成功过才允许回写，否则会把空数据盖到真实数据上
+      if (ok && changed) persist()
       notify()
-      return true
+      return ok
     })
     return initPromise
   }
@@ -107,12 +147,11 @@ export function createStore() {
    */
   function reload() {
     if (!started) return init()
-    return Promise.all([getItem(KEY_TASKS, []), getItem(KEY_META, null)]).then(function (res) {
-      hydrate(res[0], res[1])
+    return loadState().then(function (ok) {
       const now = Date.now()
-      if (checkDailyReset(now)) persist()
+      if (ok && checkDailyReset(now)) persist()
       notify()
-      return true
+      return ok
     })
   }
 
@@ -149,21 +188,25 @@ export function createStore() {
     for (let i = 0; i < list.length; i++) {
       const t = list[i]
       const elapsed = elapsedOf(t, now)
+      const reached = hasReached(t, now)
+
       let percent = 0
       if (t.targetMs > 0) {
         percent = Math.floor((elapsed / t.targetMs) * 100)
-        if (percent > 100) percent = 100
+        if (percent > 100) percent = 100   // 进度条铺满即可，时间继续走
         if (percent < 0) percent = 0
       }
+
       rows.push({
         id: t.id,
         title: t.title,
-        statusText: STATUS_TEXT[t.status] || '未开始',
-        statusClass: STATUS_CLASS[t.status] || 'st-idle',
+        // 达标只是个展示态，不停表，所以状态文案单独覆盖
+        statusText: reached ? '已达标' : (STATUS_TEXT[t.status] || '未开始'),
+        statusClass: reached ? 'st-done' : (STATUS_CLASS[t.status] || 'st-idle'),
         elapsedText: formatHMS(elapsed),
         targetText: t.targetMs > 0 ? formatHMS(t.targetMs) : '--:--:--',
         percent: percent,
-        done: t.status === STATUS.DONE,
+        reached: reached,
         btnLabel: buttonLabel(t),
         btnAction: buttonAction(t)
       })
@@ -172,8 +215,9 @@ export function createStore() {
   }
 
   /**
-   * 推进一次：算达标、必要时落盘。
-   * @returns {boolean} 是否有任务刚刚完成（用于触发振动）
+   * 推进一次：打达标标记。
+   * 达标**不停表**，任务继续计时直到用户主动暂停。
+   * @returns {{ completed: boolean, dayChanged: boolean }}
    */
   function tick(now) {
     const ts = now || Date.now()
@@ -181,13 +225,12 @@ export function createStore() {
     // 应用在前台跨过 00:00 的情况：每秒比一次日期串，开销可忽略
     const dayChanged = checkDailyReset(ts)
     for (let i = 0; i < tasks.length; i++) {
-      if (checkComplete(tasks[i], ts)) {
+      if (markReached(tasks[i], ts)) {
         tasks[i].updatedAt = ts
         completed = true
       }
     }
     if (completed || dayChanged) persist()
-    // 跨天重置后不该再有任务在跑
     return { completed: completed, dayChanged: dayChanged }
   }
 
@@ -199,8 +242,8 @@ export function createStore() {
     const now = Date.now()
     if (!applyAction(tasks[i], action, now)) return false
     tasks[i].updatedAt = now
-    // 开始/继续后可能已经达标（目标极短），顺手检测一次
-    checkComplete(tasks[i], now)
+    // 重置后重新计时、或目标时间很短时，顺手补一次达标标记
+    markReached(tasks[i], now)
     persist()
     notify()
     return true
@@ -239,8 +282,7 @@ export function createStore() {
     const now = Date.now()
     tasks[i].targetMs = targetMs > 0 ? targetMs : 0
     tasks[i].updatedAt = now
-    // 目标改小后可能立刻达标
-    checkComplete(tasks[i], now)
+    markReached(tasks[i], now)
     persist()
     notify()
     return true
@@ -296,10 +338,11 @@ export function createStore() {
         draft = null
         return { ok: false, reason: 'missing' }
       }
+      const now = Date.now()
       t.title = draft.title
       t.targetMs = draft.targetMs > 0 ? draft.targetMs : 0
-      t.updatedAt = Date.now()
-      checkComplete(t, Date.now())
+      t.updatedAt = now
+      markReached(t, now)
       persist()
       notify()
       result = { ok: true, task: t }
@@ -334,6 +377,7 @@ export function createStore() {
     buildRows: buildRows,
     tick: tick,
     elapsedOf: elapsedOf,
+    hasReached: hasReached,
     emitAction: emitAction,
     addTask: addTask,
     updateTitle: updateTitle,

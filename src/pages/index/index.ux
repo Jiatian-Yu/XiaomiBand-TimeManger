@@ -2,9 +2,6 @@
   <div class="page">
     <div class="header">
       <text class="header-title">任务清单</text>
-      <div class="add-btn" @click="onAdd">
-        <text class="add-icon">＋</text>
-      </div>
     </div>
 
     <scroll class="list" scroll-y="{{true}}">
@@ -17,7 +14,7 @@
         <text class="elapsed">{{item.elapsedText}} / {{item.targetText}}</text>
 
         <div class="bar-wrap">
-          <div class="bar {{item.done ? 'bar-done' : ''}}" style="width: {{item.percent}}%"></div>
+          <div class="bar {{item.reached ? 'bar-done' : ''}}" style="width: {{item.percent}}%"></div>
         </div>
 
         <div class="btns">
@@ -35,7 +32,14 @@
 
       <div class="empty" if="{{rows.length === 0}}">
         <text class="empty-text">还没有任务</text>
-        <text class="empty-text">点右上角 ＋ 添加</text>
+        <text class="empty-text">点下方 ＋ 添加</text>
+      </div>
+
+      <!-- 新增按钮：跟在最后一个任务后面，随列表一起滚动 -->
+      <div class="add-row">
+        <div class="add-btn" @click="onAdd">
+          <text class="add-icon">＋</text>
+        </div>
       </div>
     </scroll>
   </div>
@@ -169,10 +173,8 @@ export default {
   width: 100%;
   height: 50px;
   margin-top: 38px;
-  padding-left: 30px;
-  padding-right: 30px;
   flex-direction: row;
-  justify-content: space-between;
+  justify-content: center;
   align-items: center;
 }
 
@@ -182,17 +184,26 @@ export default {
   font-weight: bold;
 }
 
+/* 按钮不再固定在顶部，而是跟着列表走，所以外面套一层满宽的 row 来水平居中 */
+.add-row {
+  width: 100%;
+  justify-content: center;
+  align-items: center;
+  margin-top: 6px;
+  margin-bottom: 14px;
+}
+
 .add-btn {
-  width: 34px;
-  height: 34px;
-  border-radius: 17px;
+  width: 48px;
+  height: 48px;
+  border-radius: 24px;
   background-color: #0a84ff;
   justify-content: center;
   align-items: center;
 }
 
 .add-icon {
-  font-size: 26px;
+  font-size: 30px;
   color: #ffffff;
 }
 

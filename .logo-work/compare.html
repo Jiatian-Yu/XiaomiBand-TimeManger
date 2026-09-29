@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8">
+<style>
+  body { margin:0; background:#000; font:12px "Segoe UI",sans-serif; color:#888; }
+  .row { display:flex; align-items:flex-end; gap:26px; padding:14px 20px; }
+  .row + .row { border-top:1px solid #1e1e1e; }
+  .name { width:52px; font-weight:600; }
+  img { display:block; }
+  .u { display:flex; gap:14px; align-items:flex-end; }
+</style></head>
+<body>
+<div id="r"></div>
+<script>
+  const rows = [['v1','v2'],['v3','v4']];
+  const r = document.getElementById('r');
+  for (const set of rows) {
+    const row = document.createElement('div'); row.className = 'row';
+    row.innerHTML = '<div class="name">256 / 48</div>';
+    for (const v of set) {
+      const d = document.createElement('div'); d.className='u';
+      d.innerHTML = '<img src="'+v+'.svg" width="256" height="256"><img src="'+v+'.svg" width="48" height="48">';
+      row.appendChild(d);
+    }
+    r.appendChild(row);
+  }
+</script>
+</body></html>
