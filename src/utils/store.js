@@ -25,11 +25,24 @@ import {
   normalizeTask,
   resetForNewDay
 } from './model'
-import { formatHMS, todayStr } from './time'
+import { formatHMS, isEarlierDay, todayStr } from './time'
 
+/**
+ * ⚠️ 持久化只写这一个 key（原子）。
+ * 老版本把 tasks 和 lastDate 分存 tm.tasks / tm.meta 两个 key，persist() 会在同一个
+ * tick 里并发发两个 storage.set，手环上第二个 key 写不进去 → lastDate 永远为空 →
+ * 每次冷启动都被判成「跨天」→ 累积时间被清空（真实踩过的 bug）。
+ * 合成一个 key 后 tasks 和 lastDate 不可能互相矛盾，也不会出现半截状态。
+ * 两个旧 key 只用于读迁移，不再写。
+ */
+const KEY_STATE = 'tm.state'
 const KEY_TASKS = 'tm.tasks'
 const KEY_META = 'tm.meta'
-const SCHEMA_VERSION = 1
+const SCHEMA_VERSION = 2
+
+/** 写盘失败后的重试节奏：失败说明数据没落地，值得重试几次 */
+const RETRY_DELAY = 3000
+const MAX_RETRY = 5
 
 export function createStore() {
   let tasks = []
@@ -43,6 +56,12 @@ export function createStore() {
   // 既不会并发写同一个 key，也不会丢掉最后一次改动。
   let dirty = false
   let writing = false
+  let retryTimer = null
+  let retryCount = 0
+  // 本地改动计数器：读取是异步的，若读回来的旧快照会盖掉刚发生的改动就丢弃它
+  let revision = 0
+  // 是否刚从旧格式（tm.tasks / tm.meta）迁移过来，需要立刻按新结构回写一次
+  let needsMigration = false
 
   // ---------- 内部工具 ----------
 
@@ -56,21 +75,51 @@ export function createStore() {
     }
   }
 
+  function scheduleRetry() {
+    if (retryTimer || typeof setTimeout !== 'function') return
+    retryTimer = setTimeout(function () {
+      retryTimer = null
+      writeNow()
+    }, RETRY_DELAY)
+  }
+
   function flush() {
     if (!dirty) {
       writing = false
       return
     }
     dirty = false
-    Promise.all([setItem(KEY_TASKS, tasks), setItem(KEY_META, meta)]).then(flush, function (e) {
-      console.error('[store] 持久化失败', e)
-      // 保留 dirty，下次改动会重试
-      dirty = true
-      writing = false
+    // 整体快照一次写入：tasks 和 lastDate 永远同进同退
+    const snapshot = { schema: SCHEMA_VERSION, lastDate: meta.lastDate, tasks: tasks }
+    setItem(KEY_STATE, snapshot).then(function (ok) {
+      if (!ok) {
+        // 写失败 = 这次的状态没落地，保留 dirty 并重试，绝不当成成功
+        dirty = true
+        writing = false
+        if (retryCount < MAX_RETRY) {
+          retryCount++
+          console.error('[store] 持久化失败，' + RETRY_DELAY + 'ms 后重试（第 ' + retryCount + ' 次）')
+          scheduleRetry()
+        } else {
+          console.error('[store] 持久化连续失败，放弃重试（数据仍在内存里）')
+        }
+        return
+      }
+      retryCount = 0
+      needsMigration = false
+      flush()
     })
   }
 
+  /** 用户可见的状态变了：记一次改动 + 落盘（每次改动都重新给足重试预算） */
   function persist() {
+    revision++
+    retryCount = 0
+    writeNow()
+  }
+
+  /** 单纯把当前状态写下去；重试定时器也走这里，所以它不重置重试预算 */
+  function writeNow() {
     dirty = true
     if (writing) return
     writing = true
@@ -87,39 +136,101 @@ export function createStore() {
   /**
    * 惰性跨天重置：手环不可能保证 00:00 时应用在运行，
    * 所以不做定时任务，而是「谁先发现谁重置」。
-   * @returns {boolean} 是否执行了重置
+   *
+   * ⚠️ 铁律：只有在**存储里的日期确实早于今天**时才清数据。
+   * lastDate 为空（首次启动 / 元数据丢失）、解析不出来、或比今天还晚（时钟回拨）
+   * 时，一律只把日期对齐到今天，**一个任务都不动**。
+   * 宁可漏掉一次跨天重置，也绝不能把用户累积的时间白白清掉 —— 这正是之前
+   * 「关掉再打开时间就没了」的成因：lastDate 写不进去 → 每次冷启动都被当成新的一天。
+   *
+   * @returns {boolean} 是否发生了需要落盘的日期变化
    */
   function checkDailyReset(now) {
     const today = todayStr()
-    if (meta.lastDate === today) return false
+    const prev = meta.lastDate
+    if (prev === today) return false
+    meta.lastDate = today
+    if (!isEarlierDay(prev, today)) {
+      if (tasks.length > 0) {
+        console.warn('[store] 跳过跨天重置：存储里的日期不可信 lastDate=' + JSON.stringify(prev))
+      }
+      return true
+    }
+    console.log('[store] 跨天重置 ' + prev + ' → ' + today + '（' + tasks.length + ' 个任务）')
     for (let i = 0; i < tasks.length; i++) {
       resetForNewDay(tasks[i], now)
     }
-    meta.lastDate = today
     return true
+  }
+
+  /** 用存储里的内容覆盖内存（只有确认读成功时才能调用） */
+  function applyState(rawTasks, rawLastDate) {
+    tasks = Array.isArray(rawTasks) ? rawTasks.map(normalizeTask) : []
+    meta = {
+      lastDate: typeof rawLastDate === 'string' ? rawLastDate : '',
+      schema: SCHEMA_VERSION
+    }
   }
 
   /**
    * 从存储装载状态。
-   * ⚠️ 关键：只有**两个 key 都读成功**才覆盖内存。
-   * 读失败就用现有内存继续跑 —— 否则一次临时读失败会被后续 persist()
-   * 固化成永久数据丢失（真实踩过的坑：第二天冷启动任务全没了）。
+   * ⚠️ 铁律：只有**读取成功**才覆盖内存。读失败就保留现有内存、也绝不回写，
+   * 否则一次临时读失败会被后续 persist() 固化成永久数据丢失。
    * @returns {Promise<boolean>} 是否成功装载
    */
   function loadState() {
+    const rev = revision
+    return getItem(KEY_STATE).then(function (res) {
+      if (revision !== rev) {
+        // 读取期间用户已经改了数据，别用读回来的旧快照盖掉它
+        console.warn('[store] 读取期间发生本地改动，丢弃这次快照')
+        return false
+      }
+      if (!res.ok) {
+        console.error('[store] 存储读取失败，保留内存中的现有数据，本次不覆盖也不回写')
+        return false
+      }
+      if (res.value === null || res.value === undefined) {
+        // 新 key 还不存在（从老版本升级上来）→ 退回读旧的 tm.tasks / tm.meta
+        return loadLegacy()
+      }
+      if (typeof res.value === 'object' && Array.isArray(res.value.tasks)) {
+        applyState(res.value.tasks, res.value.lastDate)
+        return true
+      }
+      // 有内容但不是认识的形状：按损坏处理。保留内存，绝不用它去覆盖
+      console.error('[store] 存储内容形状异常，保留内存中的现有数据，本次不覆盖也不回写')
+      return false
+    })
+  }
+
+  /**
+   * 迁移用：读老版本分存的 tm.tasks / tm.meta。
+   * 只有**两个都读成功**才覆盖内存；读到内容就标记待迁移，下次 persist 自动写成新结构。
+   * 注意：读一个不存在的 key 走 success 并返回默认值（Vela 文档确认），
+   * 所以「两个都是 null」= 真·第一次启动，而不是读失败。
+   */
+  function loadLegacy() {
+    const rev = revision
     return Promise.all([getItem(KEY_TASKS), getItem(KEY_META)]).then(function (res) {
       const t = res[0]
       const m = res[1]
+      if (revision !== rev) return false
       if (!t.ok || !m.ok) {
-        console.error('[store] 存储读取失败，保留内存中的现有数据，本次不覆盖也不回写',
+        console.error('[store] 旧格式读取失败，保留内存中的现有数据',
           'tasks.ok=' + t.ok, 'meta.ok=' + m.ok)
         return false
       }
-
-      tasks = Array.isArray(t.value) ? t.value.map(normalizeTask) : []
-      meta = (m.value && typeof m.value === 'object') ? m.value : { lastDate: '', schema: SCHEMA_VERSION }
-      if (typeof meta.lastDate !== 'string') meta.lastDate = ''
-      meta.schema = SCHEMA_VERSION
+      if (t.value === null && m.value === null) {
+        applyState([], '')
+        return true
+      }
+      // ⚠️ 迁移时**故意丢掉旧的 lastDate**：它正是老代码写不进去的那个字段，
+      // 不可信。丢掉它的效果是「把今天当成基准日、一个任务都不动」，
+      // 代价是跨天重置最多被推迟一次，换的是升级那一刻绝不丢用户的时间。
+      applyState(t.value, '')
+      needsMigration = true
+      console.log('[store] 从旧格式迁移 ' + tasks.length + ' 个任务')
       return true
     })
   }
@@ -134,7 +245,7 @@ export function createStore() {
       const changed = ok ? checkDailyReset(now) : false
       started = true
       // 只有读成功过才允许回写，否则会把空数据盖到真实数据上
-      if (ok && changed) persist()
+      if (ok && (changed || needsMigration)) persist()
       notify()
       return ok
     })
@@ -149,7 +260,8 @@ export function createStore() {
     if (!started) return init()
     return loadState().then(function (ok) {
       const now = Date.now()
-      if (ok && checkDailyReset(now)) persist()
+      const changed = ok ? checkDailyReset(now) : false
+      if (ok && (changed || needsMigration)) persist()
       notify()
       return ok
     })

@@ -170,6 +170,11 @@ export function normalizeTask(raw) {
     task.status = STATUS.IDLE
     task.runningSince = null
   }
+  // 状态是 running 却没有起点（数据残缺）→ 降级成 paused。
+  // 否则秒表会永远停在 00:00:00 且用户没有任何办法让它再走起来。
+  if (task.status === STATUS.RUNNING && task.runningSince === null) {
+    task.status = STATUS.PAUSED
+  }
   return task
 }
 

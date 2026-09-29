@@ -36,3 +36,32 @@ export function todayStr() {
   const d = new Date()
   return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate()
 }
+
+/**
+ * "YYYY-M-D" → 可比较的 YYYYMMDD 数字；解析不出来返回 null。
+ * 用 Date(y, m-1, d) 构造再取日历字段，而不是 new Date(字符串)：
+ * 后者对非补零格式的处理各引擎不一致，而且按毫秒差比较还会被夏令时
+ * （23/25 小时的一天）和时区偏移坑到。取日历字段则天然安全。
+ */
+function dayNumber(s) {
+  if (typeof s !== 'string') return null
+  const m = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(s)
+  if (!m) return null
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
+  if (isNaN(d.getTime())) return null
+  return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate()
+}
+
+/**
+ * a 是否比 b 早**至少一天**（两个参数都是 "YYYY-M-D" 本地日期串）。
+ *
+ * 这是跨天重置的唯一判据，所以对不可信输入一律返回 false：
+ * 空串、格式不认识、以及 a 比 b 还晚（时钟被回拨 / 时区变了）都返回 false。
+ * 语义是「宁可不重置，也不清掉用户累积的时间」。
+ */
+export function isEarlierDay(a, b) {
+  const na = dayNumber(a)
+  const nb = dayNumber(b)
+  if (na === null || nb === null) return false
+  return nb > na
+}
