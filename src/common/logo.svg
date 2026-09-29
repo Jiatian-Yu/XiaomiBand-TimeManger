@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="TimeManager">
+  <title>TimeManager</title>
+  <desc>秒表计时圆环与对勾 —— 时间管理 / 每日目标完成进度</desc>
+
+  <defs>
+    <!-- 图标底色：蓝 → 靛蓝，呼应 App 主色 #0A84FF -->
+    <linearGradient id="tm-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3E9BFF"/>
+      <stop offset=".5" stop-color="#0A84FF"/>
+      <stop offset="1" stop-color="#5B4BF5"/>
+    </linearGradient>
+
+    <!-- 左上角柔光 -->
+    <radialGradient id="tm-shine" cx=".26" cy=".14" r=".8">
+      <stop offset="0" stop-color="#ffffff" stop-opacity=".30"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- 进度弧：琥珀 → 橙，对应 App 的“进行中”色 #FF9F0A -->
+    <linearGradient id="tm-arc" gradientUnits="userSpaceOnUse" x1="120" y1="140" x2="392" y2="430">
+      <stop offset="0" stop-color="#FFD60A"/>
+      <stop offset="1" stop-color="#FF8A00"/>
+    </linearGradient>
+
+  </defs>
+
+  <!-- 圆形底：半径 240，与 512 画布留出 16 的透明边距 -->
+  <circle cx="256" cy="256" r="240" fill="url(#tm-bg)"/>
+  <circle cx="256" cy="256" r="240" fill="url(#tm-shine)"/>
+
+  <!-- 表把 + 表冠 -->
+  <rect x="240" y="92" width="32" height="46" rx="12" fill="#ffffff"/>
+  <rect x="224" y="58" width="64" height="46" rx="17" fill="#ffffff"/>
+
+  <!-- 计时进度环：底环为剩余量，琥珀弧为已坚持 72% -->
+  <!-- 周长 2πr = 967.6，72.2% ≈ 698.4；旋转 -70° 让缺口留在左上方，避开表冠 -->
+  <g fill="none" stroke-width="28" transform="rotate(-70 256 286)">
+    <circle cx="256" cy="286" r="154" stroke="#ffffff" stroke-opacity=".28"/>
+    <circle cx="256" cy="286" r="154" stroke="url(#tm-arc)" stroke-linecap="round" stroke-dasharray="698.4 967.6"/>
+  </g>
+
+  <!-- 对勾：任务完成 -->
+  <path d="M192 287 L238 333 L320 239" fill="none" stroke="#ffffff" stroke-width="34"
+        stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
