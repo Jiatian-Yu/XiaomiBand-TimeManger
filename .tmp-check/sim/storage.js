@@ -11,7 +11,7 @@
  *   之后所有写盘静默失效（harness 的 S2 场景）。所以 complete 里要检查
  *   「结束了但还没有结论」这种情况，一律按失败处理，交给上层重试。
  */
-import storage from '@system.storage'
+const storage = new Proxy({}, { get: (_, p) => globalThis.__MOCK_STORAGE__[p] })
 
 /**
  * @returns {{ value: any, corrupt: boolean }}

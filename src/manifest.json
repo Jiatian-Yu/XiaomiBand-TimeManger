@@ -1,8 +1,8 @@
 {
   "package": "com.application.watch.demo",
   "name": "时间管理",
-  "versionName": "1.0.0",
-  "versionCode": 1,
+  "versionName": "1.0.4",
+  "versionCode": 4,
   "minPlatformVersion": 1000,
   "icon": "/common/logo.png",
   "deviceTypeList": [

@@ -8,7 +8,7 @@
  * 因此实例挂在 app.ux 导出的对象上，通过 this.$app.$def 跨页面共享。
  * （已在真机验证：各页面拿到的是同一个实例）
  */
-import { getItem, setItem } from './storage'
+import { getItem, setItem } from './storage.js'
 import {
   STATUS,
   STATUS_TEXT,
@@ -24,8 +24,8 @@ import {
   markReached,
   normalizeTask,
   resetForNewDay
-} from './model'
-import { formatHMS, isEarlierDay, todayStr } from './time'
+} from './model.js'
+import { formatHMS, isEarlierDay, todayStr } from './time.js'
 
 /**
  * ⚠️ 持久化只写这一个 key（原子）：tasks 和 lastDate 在同一份快照里，
